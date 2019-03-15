@@ -23,6 +23,11 @@ from rosgraph_msgs.msg import Clock as clock_msg_type
 
 from std_srvs.srv import Empty
 
+#real robot msgs
+from trajectory_msgs.msg import JointTrajectory as joint_trajectory_msg_type
+from sensor_msgs.msg import JointState as joint_state_msg_type
+from trajectory_msgs.msg import JointTrajectoryPoint as joint_trajectory_point_msg_type
+
 import numpy as np
 
 
@@ -170,8 +175,9 @@ class ros_environment(object):
 
         self.is_omega_left_wheel = 0.0
         self.is_omega_right_wheel = 0.0
-
         self.yaw_diff = 0.0
+
+        self.scale_action_factor = 1.0
 
         # tmp storage for goal pose base_link frame
         self.goal_position_linear_x = 0.0
@@ -303,7 +309,39 @@ class ros_environment(object):
             self.pub_goal_pose.publish(self.goal_pose_stamped_map_frame)
 
         else:
-            print("Real Robot interaction not implemented yet!")
+
+            ##################################################
+            # This is for real robot interaction             #
+            ##################################################
+
+            current_jt = joint_trajectory_msg_type()
+            current_jt.header.stamp = rospy.get_rostime()
+            # set each data for 4 motors because neo_relayboard only handles 4 or 8 motors
+            current_jt.joint_names.append("wheel_front_left")
+            current_jt.joint_names.append("wheel_front_right")
+            current_jt.joint_names.append("unused")
+            current_jt.joint_names.append("unused")
+
+            # if action[0] > 0 and action[1] > 0:
+            #     action[0] = action[0] + (-1)
+            #     action[1] = action[1] + (-1)
+            #
+            # if action[0] < 0 and action[1] < 0:
+            #     action[0] = action[0] + (-1)
+            #     action[1] = action[1] + (-1)
+
+            # add point with target velocities
+            current_point_left = joint_trajectory_point_msg_type()
+            current_point_left.velocities.append(action[0] * self.scale_action_factor)
+            current_point_left.velocities.append(action[1] * self.scale_action_factor)
+            current_point_left.velocities.append(0.0)
+            current_point_left.velocities.append(0.0)
+            current_jt.points.append(current_point_left)
+
+            # publish drive command
+            self.pub_set_vel.publish(current_jt)
+
+            self.pub_goal_pose.publish(self.goal_pose_stamped_map_frame)
 
         return 1
 
