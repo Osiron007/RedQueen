@@ -40,7 +40,9 @@ from geometry_msgs.msg import PoseStamped as pose_stamped_msg_type
 #from reward_calculator import reward_calculation as RC
 
 def ST_WAITFORPATH():
-    print("Waiting for a Path to follow")
+
+
+    #print("Waiting for a Path to follow")
 
     if ros_handler.is_path_available():
 
@@ -166,14 +168,7 @@ def ST_EXECUTING():
     #get state
     [s_t1, robot_current_map_pose_stamped] = ros_handler.get_state()
 
-    #check if robot is too far away
-    episode_done = False
-    if math.fabs(s_t1[2]) > 4:
-        print("Too Far away X from goal -> end episode")
-        episode_done = True
-    if math.fabs(s_t1[3]) > 4:
-        print("Too Far away Y from goal -> end episode")
-        episode_done = True
+
     # check if robot is in goal area
     if math.fabs(s_t1[2]) < 0.6 and math.fabs(s_t1[3]) < 0.6:
         #print("goal area reached -> end episode")
@@ -200,7 +195,10 @@ def ST_EXECUTING():
             # set goal pose
             ros_handler.set_goal_pose(goal_pose)
 
+            print "Dist to Goal: X=" + str(s_t1[2]) + " Y=" + str(s_t1[3])
+
             if goal_point_index > len(goal_point_list)-1:
+
                 #goal_point_index = 0
                 if(math.fabs(s_t1[2]) < 0.03 and math.fabs(s_t1[3]) < 0.03 and math.fabs((s_t1[4]*180)) < 3):
                     a_t[0][0] = 0.0
@@ -353,7 +351,7 @@ if __name__ == '__main__':
     # initial state
     activeState = "ST_WAITFORPATH"
 
-    rospy.init_node('InstinctiveMotionControlV1', anonymous=False)
+    rospy.init_node('redqueen', anonymous=False)
 
     rate = rospy.Rate(10) #Hz
 
@@ -389,24 +387,6 @@ if __name__ == '__main__':
 
     global goal_point_index
     goal_point_index = 1
-
-    print("creating goal points")
-    # X and Y positive
-    #for x in range(100, 150, 10):
-    #    for y in range(100, 150, 10):
-    #        goal_point_list.append([x, y])
-    #        goal_point_list.append([-x, y])
-    #        goal_point_list.append([x, -y])
-    #        goal_point_list.append([x, -y])
-    #        goal_point_list.append([-x, -y])
-
-    # Goal Point endless drive
-    #goal_point_list.append([100, 10])
-    #goal_point_list.append([200, 20])
-    #goal_point_list.append([300, 40])
-    #goal_point_list.append([400, 80])
-    #goal_point_list.append([450, 120])
-
 
     try:
         while not rospy.is_shutdown():

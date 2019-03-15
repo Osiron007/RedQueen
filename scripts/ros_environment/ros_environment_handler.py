@@ -10,7 +10,6 @@ import math
 
 from time import *
 
-from nav_msgs.msg import Path as path_msg_type
 from nav_msgs.msg import Odometry as odom_msg_type
 from nav_msgs.msg import OccupancyGrid as occgrid_msg_type
 from map_msgs.msg import OccupancyGridUpdate as occgrid_update_msg_type
@@ -20,43 +19,52 @@ from geometry_msgs.msg import Pose as pose_msg_type
 from geometry_msgs.msg import Twist as twist_msg_type
 from geometry_msgs.msg import PoseStamped as pose_stamped_msg_type
 from rosgraph_msgs.msg import Clock as clock_msg_type
-
-from std_srvs.srv import Empty
+from sensor_msgs.msg import Joy as joy_msg_type
+from sensor_msgs.msg import LaserScan as laserscann_msg_type
 
 #real robot msgs
 from trajectory_msgs.msg import JointTrajectory as joint_trajectory_msg_type
 from sensor_msgs.msg import JointState as joint_state_msg_type
 from trajectory_msgs.msg import JointTrajectoryPoint as joint_trajectory_point_msg_type
 
+#real robot move base world reset
+import actionlib
+from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
+from geometry_msgs.msg import PointStamped
+
+from std_srvs.srv import Empty
+
 import numpy as np
 
 
 class ros_environment(object):
 
-    def callback_path(self, new_path):
 
-        print("New Path received!")
-        self.path = new_path
-        self.path_available = True
+    def callback_js(self, joint_state):
+        #print("new joint states")
 
-
+        self.is_omega_left_wheel = joint_state.velocity[0]
+        self.is_omega_right_wheel = joint_state.velocity[1]
 
 
     def callback_odom(self, odom_msg):
         #print("Odom")
 
         if self.resetting == False and self.init == True:
+
             #print("Odom callback")
-            self.is_omega_left_wheel = (odom_msg.twist.twist.linear.x + (odom_msg.twist.twist.angular.z * self.axis_length)/2)*2/self.wheel_diameter
-            self.is_omega_right_wheel = -(odom_msg.twist.twist.linear.x - (odom_msg.twist.twist.angular.z * self.axis_length)/2)*2/self.wheel_diameter
+            # if simulation mode is active calc wheel vels from odom
+            if self.simulation:
+                self.is_omega_left_wheel = (odom_msg.twist.twist.linear.x + (odom_msg.twist.twist.angular.z * self.axis_length)/2)*2/self.wheel_diameter
+                self.is_omega_right_wheel = -(odom_msg.twist.twist.linear.x - (odom_msg.twist.twist.angular.z * self.axis_length)/2)*2/self.wheel_diameter
 
-            if(math.fabs(self.is_omega_left_wheel) < 0.02):
-                self.is_omega_left_wheel = 0.0
+                if(math.fabs(self.is_omega_left_wheel) < 0.02):
+                    self.is_omega_left_wheel = 0.0
 
-            if (math.fabs(self.is_omega_right_wheel) < 0.02):
-                self.is_omega_right_wheel = 0.0
+                if (math.fabs(self.is_omega_right_wheel) < 0.02):
+                    self.is_omega_right_wheel = 0.0
 
-            #print("Drehzahl links: " + str(self.is_omega_left_wheel) + " Drehzahl rechts: " + str(self.is_omega_right_wheel))
+                #print("Drehzahl links: " + str(self.is_omega_left_wheel) + " Drehzahl rechts: " + str(self.is_omega_right_wheel))
 
 
             #distance data is also needed
@@ -70,7 +78,9 @@ class ros_environment(object):
             self.transform_timeout_cnt = 0
             while self.transform_available == False and self.error == False:
                 try:
-                    (trans, rot) = self.tflistener.lookupTransform('odom', 'map', rospy.Time(0))
+                    #(trans, rot) = self.tflistener.lookupTransform('odom', 'map', rospy.Time(0))
+                    self.robot_current_odom_pose_stamped.header.stamp = self.tflistener.getLatestCommonTime("/map",
+                                                                                                            self.robot_current_odom_pose_stamped.header.frame_id)
                     self.transform_available = True
                     # transform goal from map frame to base_link frame
                     self.robot_current_map_pose_stamped = self.tflistener.transformPose('map', self.robot_current_odom_pose_stamped)
@@ -94,14 +104,20 @@ class ros_environment(object):
 
             while self.transform_available == False and self.error == False:
                 try:
-                    (trans, rot) = self.tflistener.lookupTransform('map', 'base_link', rospy.Time(0))
-                    self.transform_available = True
+                    #(trans, rot) = self.tflistener.lookupTransform('map', 'base_link', rospy.Time(0))
+                    #print(trans)
+                    self.goal_pose_stamped_map_frame.header.stamp = self.tflistener.getLatestCommonTime("/base_link",
+                                                                                                        self.goal_pose_stamped_map_frame.header.frame_id)
+                    #self.transform_available = True
                     # transform goal from map frame to base_link frame
                     self.goal_pose_stamped_base_link_frame = self.tflistener.transformPose('base_link',
                                                                                       self.goal_pose_stamped_map_frame)
+                    self.transform_available = True
+                    #print(self.goal_pose_stamped_base_link_frame)
                     self.error = False
-                except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
-                    # print("failed!")
+                except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException) as tf_exception:
+                    print(tf_exception)
+                    #raise
                     self.transform_timeout_cnt = self. transform_timeout_cnt + 1
                     if self.transform_timeout_cnt > 100:
                         #print("Transformation was not available all the time")
@@ -110,6 +126,9 @@ class ros_environment(object):
                     continue
 
             #store goal pose base_link frame in robot state space
+            #print("GOAL X: " + str(self.goal_pose_stamped_base_link_frame.pose.position.x))
+            #print("GOAL Y: " + str(self.goal_pose_stamped_base_link_frame.pose.position.y))
+
             self.goal_position_linear_x = self.goal_pose_stamped_base_link_frame.pose.position.x
             self.goal_position_linear_y = self.goal_pose_stamped_base_link_frame.pose.position.y
             self.goal_position_linear_z = self.goal_pose_stamped_base_link_frame.pose.position.z
@@ -143,31 +162,42 @@ class ros_environment(object):
                 #print("YAW diff calc failed!")
                 a = 0
 
+        self.new_odom_received = True
 
 
-    def __init__(self, simulation, wheel_diameter, axis_length, state_dim, additional_weight):
 
-        print("ROS ENVIRONMENT HANDLER V0.1 for Path IMC")
+
+    def __init__(self, state_space_version, simulation, wheel_diameter, axis_length, state_dim, additional_weight):
+
+        print("ROS ENVIRONMENT HANDLER V0.4")
 
 
         self.init = False
         self.simulation = simulation
         self.resetting = False
 
-        self.path = path_msg_type()
-        self.path_available = False
+        self.state_space_version = state_space_version
+
+        self.normalize_data = True
 
         #ROS
-        self.tflistener = tf.TransformListener()
+        self.tflistener = tf.TransformListener(True, rospy.Duration(10.0))
 
         #ROS Topic Subscriber
-        self.path_sub = rospy.Subscriber("/move_base/NavfnROS/plan", path_msg_type, self.callback_path)
         self.odom_sub = rospy.Subscriber("/odom", odom_msg_type, self.callback_odom)
 
         #ROS Topic Publisher
         self.pub_goal_pose = rospy.Publisher('/goal_pose', pose_stamped_msg_type, queue_size=10)
-        self.pub_cmd_vel = rospy.Publisher('/cmd_vel', twist_msg_type, queue_size=10)
-        self.pub_initial_pose = rospy.Publisher('/initialpose', PSWC_stamped_msg_type, queue_size=10)
+
+        if not self.simulation:
+            print("Using a real Robot")
+            #topics for wheel control
+            self.sub_joint_state = rospy.Subscriber("/drives/joint_state", joint_state_msg_type, self.callback_js)
+            self.pub_set_vel = rospy.Publisher('/drives/joint_trajectory', joint_trajectory_msg_type, queue_size=10)
+        else:
+            self.pub_cmd_vel = rospy.Publisher('/cmd_vel', twist_msg_type, queue_size=10)
+
+
 
         #Robot State Space
         self.state_dim = state_dim
@@ -175,9 +205,10 @@ class ros_environment(object):
 
         self.is_omega_left_wheel = 0.0
         self.is_omega_right_wheel = 0.0
+
         self.yaw_diff = 0.0
 
-        self.scale_action_factor = 1.0
+        self.new_goal = False
 
         # tmp storage for goal pose base_link frame
         self.goal_position_linear_x = 0.0
@@ -190,6 +221,8 @@ class ros_environment(object):
         self.goal_position_angular_w = 1.0
 
         self.additional_weight = additional_weight
+
+        self.scale_action_factor = 4
 
         #Robot information
         self.wheel_diameter = wheel_diameter
@@ -216,6 +249,10 @@ class ros_environment(object):
         self.robot_current_odom_pose_stamped = pose_stamped_msg_type()
         self.robot_current_map_pose_stamped = pose_stamped_msg_type()
 
+        #real robot interaction
+        #self.current_jt = joint_trajectory_msg_type()
+        #self.current_js = joint_state_msg_type()
+
         #initial pose for reset
         #header
         self.robot_initial_pose = PSWC_stamped_msg_type()
@@ -237,6 +274,9 @@ class ros_environment(object):
                                                    0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
                                                    0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.1)
 
+        #Flag for new data via odom topic handled
+        self.new_odom_received = False
+
 
         self.error = False
         self.init = True
@@ -244,41 +284,48 @@ class ros_environment(object):
     def get_error(self):
         return self.error
 
+    def is_state_space_usable(self):
+        return self.new_odom_received
+
     def get_state(self):
         #this method returns the current state of the mobile robot
 
         state_as_nparray = np.zeros([self.state_dim])
 
-        #Model V1
-        if self.state_dim == 5:
+        # normalize from [-6, 6] to [-1, 1]
+        state_as_nparray[0] = self.is_omega_left_wheel/self.scale_action_factor
+        state_as_nparray[1] = self.is_omega_right_wheel/self.scale_action_factor
 
-            state_as_nparray[0] = self.is_omega_left_wheel/4
-            state_as_nparray[1] = self.is_omega_right_wheel/4
+        #print "State Vel Left : " + str(self.is_omega_left_wheel) + "State Vel Right : " + str(
+            #self.is_omega_right_wheel)
+        #print "Scaled State Vel Left : " + str(state_as_nparray[0]) + "Scaled State Vel Right : " + str(
+            #state_as_nparray[1])
 
-            state_as_nparray[2] = self.goal_position_linear_x/3
-            state_as_nparray[3] = self.goal_position_linear_y/3
 
-            state_as_nparray[4] = self.yaw_diff/180
+        #normalize from [-3, 3] to [-1, 1]
+        if self.goal_position_linear_x > 3:
+            self.goal_position_linear_x = 3
+        if self.goal_position_linear_x < -3:
+            self.goal_position_linear_x = -3
+        if self.goal_position_linear_y > 3:
+            self.goal_position_linear_y = 3
+        if self.goal_position_linear_y < -3:
+            self.goal_position_linear_y = -3
 
-        #Model V2
-        elif self.state_dim == 405:
-            i = 0
-            while i < 400:
-                state_as_nparray[i] = 0.0
-                i = i + 1
+        state_as_nparray[2] = self.goal_position_linear_x/3
+        state_as_nparray[3] = self.goal_position_linear_y/3
 
-            state_as_nparray[400] = self.is_omega_left_wheel
-            state_as_nparray[401] = self.is_omega_right_wheel
+        state_as_nparray[4] = self.yaw_diff/180
 
-            state_as_nparray[402] = self.goal_position_linear_x
-            state_as_nparray[403] = self.goal_position_linear_y
+        print "Goal X: " + str(state_as_nparray[2])
+        print "Goal Y: " + str(state_as_nparray[3])
+        print "Goal Alpha: " + str(state_as_nparray[4])
 
-            state_as_nparray[404] = self.yaw_diff
-
-        else:
-            print("REH: ERROR: STATE SPACE WRONG!!!!!")
 
         #print("GET STATE: X: " + str(self.robot_current_map_pose_stamped.pose.position.x) + " Y: " + str(self.robot_current_map_pose_stamped.pose.position.y))
+
+        #mark state space values as used
+        self.new_odom_received = False
 
         return [state_as_nparray, self.robot_current_map_pose_stamped]
 
@@ -287,8 +334,14 @@ class ros_environment(object):
 
         if self.simulation == True:
             #transform wheel rotation to velocity command because simulation can not handle wheel rotation commands
-            self.target_omega_left_wheel = action[0]
-            self.target_omega_right_wheel = action[1]
+
+            print "Action Left : " + str(action[0]) + "Action Right : " + str(action[1])
+
+            # scale noise action to real action space
+            self.target_omega_left_wheel = action[0] * self.scale_action_factor
+            self.target_omega_right_wheel = action[1] * self.scale_action_factor
+
+            print "Scaled Action Left : " + str(self.target_omega_left_wheel) + "Scaled Action Right : " + str(self.target_omega_right_wheel)
 
             #publish cmd_vel to ROS
             self.cmd_vel_msg = twist_msg_type()
@@ -316,7 +369,7 @@ class ros_environment(object):
 
             current_jt = joint_trajectory_msg_type()
             current_jt.header.stamp = rospy.get_rostime()
-            # set each data for 4 motors because neo_relayboard only handles 4 or 8 motors
+            #set each data for 4 motors because neo_relayboard only handles 4 or 8 motors
             current_jt.joint_names.append("wheel_front_left")
             current_jt.joint_names.append("wheel_front_right")
             current_jt.joint_names.append("unused")
@@ -330,15 +383,15 @@ class ros_environment(object):
             #     action[0] = action[0] + (-1)
             #     action[1] = action[1] + (-1)
 
-            # add point with target velocities
+            #add point with target velocities
             current_point_left = joint_trajectory_point_msg_type()
-            current_point_left.velocities.append(action[0] * self.scale_action_factor)
-            current_point_left.velocities.append(action[1] * self.scale_action_factor)
+            current_point_left.velocities.append(action[0]*self.scale_action_factor*-1)
+            current_point_left.velocities.append(action[1]*self.scale_action_factor*-1)
             current_point_left.velocities.append(0.0)
             current_point_left.velocities.append(0.0)
             current_jt.points.append(current_point_left)
 
-            # publish drive command
+            #publish drive command
             self.pub_set_vel.publish(current_jt)
 
             self.pub_goal_pose.publish(self.goal_pose_stamped_map_frame)
@@ -358,17 +411,11 @@ class ros_environment(object):
         self.goal_pose_stamped_map_frame.pose.orientation.z = goal_pose.orientation.z
         self.goal_pose_stamped_map_frame.pose.orientation.w = goal_pose.orientation.w
 
-    def set_initial_pose(self):
-        print("Setting initial pose")
-        self.robot_initial_pose.header.stamp = rospy.get_rostime()
-        self.pub_initial_pose.publish(self.robot_initial_pose)
+        self.new_goal = True
 
-    def is_path_available(self):
-        return self.path_available
-
-    def get_path(self):
-        self.path_available = False
-        return self.path
+        # mark state space values as used
+        self.new_odom_received = False
 
     def reset_error(self):
         self.error = False
+
