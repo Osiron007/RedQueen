@@ -10,6 +10,8 @@ import math
 
 from time import *
 
+
+from nav_msgs.msg import Path as path_msg_type
 from nav_msgs.msg import Odometry as odom_msg_type
 from nav_msgs.msg import OccupancyGrid as occgrid_msg_type
 from map_msgs.msg import OccupancyGridUpdate as occgrid_update_msg_type
@@ -38,6 +40,12 @@ import numpy as np
 
 
 class ros_environment(object):
+
+    def callback_path(self, new_path):
+
+        print("New Path received!")
+        self.path = new_path
+        self.path_available = True
 
 
     def callback_js(self, joint_state):
@@ -167,7 +175,7 @@ class ros_environment(object):
 
 
 
-    def __init__(self, state_space_version, simulation, wheel_diameter, axis_length, state_dim, additional_weight):
+    def __init__(self, simulation, state_dim, wheel_diameter, axis_length, additional_weight):
 
         print("ROS ENVIRONMENT HANDLER V0.4")
 
@@ -176,7 +184,9 @@ class ros_environment(object):
         self.simulation = simulation
         self.resetting = False
 
-        self.state_space_version = state_space_version
+        self.path = path_msg_type()
+        self.path_available = False
+        self.new_goal = False
 
         self.normalize_data = True
 
@@ -184,6 +194,7 @@ class ros_environment(object):
         self.tflistener = tf.TransformListener(True, rospy.Duration(10.0))
 
         #ROS Topic Subscriber
+        self.path_sub = rospy.Subscriber("/move_base/NavfnROS/plan", path_msg_type, self.callback_path)
         self.odom_sub = rospy.Subscriber("/odom", odom_msg_type, self.callback_odom)
 
         #ROS Topic Publisher
@@ -222,7 +233,7 @@ class ros_environment(object):
 
         self.additional_weight = additional_weight
 
-        self.scale_action_factor = 4
+        self.scale_action_factor = 1.0
 
         #Robot information
         self.wheel_diameter = wheel_diameter
@@ -413,6 +424,16 @@ class ros_environment(object):
 
         self.new_goal = True
 
+        # mark state space values as used
+        self.new_odom_received = False
+
+    def is_path_available(self):
+        return self.path_available
+        self.new_goal = True
+
+    def get_path(self):
+        self.path_available = False
+        return self.path
         # mark state space values as used
         self.new_odom_received = False
 

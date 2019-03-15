@@ -42,7 +42,7 @@ from geometry_msgs.msg import PoseStamped as pose_stamped_msg_type
 def ST_WAITFORPATH():
 
 
-    #print("Waiting for a Path to follow")
+    print("Waiting for a Path to follow")
 
     if ros_handler.is_path_available():
 
