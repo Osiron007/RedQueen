@@ -37,7 +37,7 @@ catkin_package(
 # Install
 ################################################################################
 catkin_install_python(PROGRAMS
-  scripts/deepthought.py
+  scripts/redqueen.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
